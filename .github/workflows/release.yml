@@ -66,9 +66,9 @@ jobs:
             artifact: ClineDesktop2API-windows-amd64.exe
           - os: ubuntu-latest
             artifact: ClineDesktop2API-linux-amd64
-          - os: macos-13
+          - os: macos-15-intel
             artifact: ClineDesktop2API-macos-amd64
-          - os: macos-14
+          - os: macos-latest
             artifact: ClineDesktop2API-macos-arm64
     runs-on: ${{ matrix.os }}
     steps:
