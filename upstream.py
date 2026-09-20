@@ -134,4 +134,3 @@ def do_request(method, path, body=None, headers=None, timeout=120,
         if enabled():
             log_line("---", f"{method} {path} -> ERR {e} ({elapsed:.1f}s)")
         return 502, {}, json.dumps({"error": {"message": str(e), "type": "proxy_error"}}).encode()
-
