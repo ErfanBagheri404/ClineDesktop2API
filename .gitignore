@@ -11,3 +11,14 @@ probe.exe
 cline.log
 scan*.py
 test.log
+build/
+dist/
+*.spec
+__pycache__/
+cline_proxy_auth.json
+cline.log
+workos_tokens.json
+cline_tokens.json
+*.bak*
+scan*.py
+test.log
