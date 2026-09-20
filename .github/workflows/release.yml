@@ -1,0 +1,160 @@
+name: Release
+
+# Every push to master bumps the patch version, tags it, builds a standalone
+# binary for each OS with PyInstaller, and publishes a GitHub Release.
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - "VERSION"
+      - "*.md"
+      - ".github/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync to current master tip
+        run: |
+          set -euo pipefail
+          git fetch origin master
+          git reset --hard origin/master
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          set -euo pipefail
+          current="$(tr -d '[:space:]' < VERSION)"
+          IFS='.' read -r major minor patch <<< "$current"
+          next="${major}.${minor}.$((patch + 1))"
+          echo "$next" > VERSION
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "Bumped $current -> $next"
+
+      - name: Commit version bump
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git commit -m "chore: release v${{ steps.bump.outputs.version }} [skip ci]"
+          git push
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: ClineDesktop2API-windows-amd64.exe
+          - os: ubuntu-latest
+            artifact: ClineDesktop2API-linux-amd64
+          - os: macos-13
+            artifact: ClineDesktop2API-macos-amd64
+          - os: macos-14
+            artifact: ClineDesktop2API-macos-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build binary
+        run: python -m PyInstaller --onefile --name "${{ matrix.artifact }}" --distpath dist --workpath build --specpath build main.py
+
+      - name: Smoke test
+        shell: bash
+        run: ./dist/${{ matrix.artifact }} --help || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.version.outputs.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Collect binaries
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          chmod +x release/* || true
+          ls -la release/
+
+      - name: Build release notes
+        run: |
+          set -euo pipefail
+          prev="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+          {
+            echo "## What changed"
+            echo
+            if [ -n "$prev" ]; then
+              git log --no-merges --pretty=format:"- %s (%h)" "${prev}..HEAD"
+            else
+              git log --no-merges --pretty=format:"- %s (%h)" HEAD
+            fi
+            echo
+            echo
+            echo "## Install"
+            echo
+            echo "Download the binary for your platform, then run:"
+            echo
+            echo '```'
+            echo "./ClineDesktop2API-linux-amd64 --login"
+            echo "./ClineDesktop2API-linux-amd64 --no-menu"
+            echo '```'
+            echo
+            echo "Windows: run \`ClineDesktop2API-windows-amd64.exe\` (menu opens automatically)."
+          } > RELEASE_NOTES.md
+
+      - name: Tag
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ needs.version.outputs.version }}"
+          git push origin "v${{ needs.version.outputs.version }}"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ needs.version.outputs.version }}"
+          name: "v${{ needs.version.outputs.version }}"
+          body_path: RELEASE_NOTES.md
+          files: release/*
+          make_latest: true
