@@ -4,55 +4,75 @@ Local reverse proxy that fixes Cline Desktop's **"Token registration failed: 403
 
 ## Problem
 
-Cline Desktop (WebView2 + Bun sidecar `code-sidecar.exe`) sends TLS handshakes (JA3/JA4 fingerprint) that Google Cloud Armor flags as suspicious → HTTP **403 Forbidden** on `api.cline.bot`.
+Cline Desktop (WebView2 + Bun sidecar) sends TLS handshakes that Google Cloud Armor's **JA3/JA4 fingerprinting** flags as suspicious → HTTP 403 Forbidden.
 
-Python's OpenSSL TLS stack has a different fingerprint that **passes** the check.
+The affected stacks: Go `crypto/tls`, Windows schannel, Bun `usockets`.
+The one that passes: **Python's OpenSSL** (different ClientHello fingerprint).
 
 ## Solution
 
 ```
-Cline sidecar (Bun TLS, flagged)           ← talks plain HTTP to localhost
-   ↓ CLINE_API_BASE_URL=http://127.0.0.1:61022
-proxy.py (local HTTP server, 61022)        ← re-originates with Python OpenSSL
-   ↓ HTTPS
-api.cline.bot                               ← 200 OK, fingerprint passes
+Cline sidecar → HTTP → localhost:61022 (this proxy) → HTTPS → api.cline.bot
+                         Python OpenSSL (passes JA3 check)
+```
+
+Set one env var, launch Cline through the proxy:
+```
+set CLINE_API_BASE_URL=http://127.0.0.1:61022
+"C:\Users\mrenm\AppData\Local\Cline\cline-app.exe"
 ```
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `proxy.py` | Local reverse proxy: HTTP in on `127.0.0.1:61022`, HTTPS out to `api.cline.bot`. |
-| `auth_flow.py` | WorkOS device-code auth → Cline `/register` → inject creds into `~/.cline/data/settings/providers.json`. |
-| `start_cline.bat` | Launch Cline Desktop with `CLINE_API_BASE_URL` set. |
+| `main.py` | CLI entry point (`--port`, `--bind`, `--api-key`, `--log`, `--rate-limit`, `--desensitize`) |
+| `server.py` | HTTP server: Cline passthrough, `/v1/models`, `/v1/chat/completions`, `/v1/messages` |
+| `upstream.py` | Python OpenSSL upstream client (Cloud Armor bypass) |
+| `anthropic.py` | Anthropic Messages API ↔ OpenAI chat completions translation |
+| `ratelimit.py` | Per-IP token-bucket rate limiter |
+| `auth.py` | Cline `providers.json` credential read/write |
+| `desensitize.py` | Content moderation trigger rewriting |
+| `logging.py` | Request logging with credential redaction |
+| `banner.py` | Startup banner |
+| `config.py` | CLI config + env var overrides |
+| `auth_flow.py` | WorkOS device-code auth → Cline register → inject creds |
+| `start_cline.bat` | Windows launcher with `CLINE_API_BASE_URL` set |
+| `tests/selfcheck.py` | Unit tests for translation + redaction + config |
 
 ## Usage
 
 ```bash
-# 1. start the proxy
-python proxy.py
+# Start proxy
+python main.py --port 61022
 
-# 2. launch Cline pointed at it (set the env var)
+# In another terminal, launch Cline through it
 set CLINE_API_BASE_URL=http://127.0.0.1:61022
-"C:\Users\mrenm\AppData\Local\Cline\cline-app.exe"
+start "" "C:\Users\mrenm\AppData\Local\Cline\cline-app.exe"
 ```
+
+Or use `start_cline.bat`.
 
 ## Port
 
-Default `61022`. Override with env `CLINE_PROXY_PORT`.
+Default `61022`. Override via `--port` or `CLINE_PROXY_PORT` env var.
 
 ## Auth
 
-Cline uses **WorkOS AuthKit** device flow (`api.workos.com`, client `client_01K3A541FN8TA3EPPHTD2325AR`):
+Cline uses **WorkOS AuthKit** device flow (`client_01K3A541FN8TA3EPPHTD2325AR`):
 
-1. `POST /user_management/authorize/device` → device_code + `authkit.cline.bot/device?user_code=...`
-2. User confirms code in browser
-3. Poll `POST /user_management/authenticate` (grant_type device_code) → WorkOS access/refresh tokens
-4. `POST api.cline.bot/api/v1/auth/register` with those tokens → Cline session tokens
-5. Those get stored in `~/.cline/data/settings/providers.json` under `providers.cline.settings.auth`
+1. `auth_flow.py` requests device code from `api.workos.com`
+2. User confirms at `authkit.cline.bot/device?user_code=XXXX-XXXX`
+3. Exchanges for Cline session tokens via `api.cline.bot/api/v1/auth/register`
+4. Injects into `~/.cline/data/settings/providers.json`
 
-The device-code exchange works from any network; only the Cline `/register` and API calls need the clean TLS fingerprint, which the proxy provides.
+## Testing
 
-## Why not a TLS MITM?
+```bash
+python tests/selfcheck.py   # 15 checks: anthropic translation, redaction, desensitize, config
+```
 
-The app is WebView2 + Bun. A `CLINE_API_BASE_URL` env override (read from `process.env`, confirmed in `code-sidecar.exe`) is the clean injection point — no CA trust, no cert scraping, no code patch.
+## Why not Go?
+
+Go's `crypto/tls` produces a ClientHello that Cloud Armor blocks.
+`refraction-networking/utls` bypasses JA3 but forces HTTP/2 (ALPN=h2 from the Chrome profile), and Go's HTTP/1.1 transport can't read h2 frames. Python is the correct TLS stack for this upstream.
