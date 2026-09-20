@@ -8,6 +8,7 @@ from reqlog import enabled, log_line
 
 UPSTREAM = "https://api.cline.bot"
 CTX = ssl.create_default_context()
+UA = "Cline/0.0.32"
 HEADERS_TO_DROP = frozenset(["host", "connection", "transfer-encoding"])
 PASS_HEADERS = frozenset([
     "authorization", "content-type", "accept", "accept-encoding",
@@ -44,6 +45,51 @@ def _normalize_path(path):
     return path
 
 
+# Free-tier model IDs, fetched live from /api/v1/ai/cline/recommended-models
+# and cached. Requests for the same model without the cline-free/ prefix are
+# billed, so we rewrite them when the desktop headers are present.
+_free_cache = {"ids": [], "t": 0.0}
+_FREE_TTL = 600.0
+
+
+def _free_model_ids():
+    """Return the set of free-tier model IDs (cached 10 min)."""
+    if _free_cache["ids"] and time.time() - _free_cache["t"] < _FREE_TTL:
+        return _free_cache["ids"]
+    try:
+        url = UPSTREAM + "/api/v1/ai/cline/recommended-models"
+        req = urllib.request.Request(url, headers=dict(DESKTOP_HEADERS, **{"User-Agent": UA}))
+        resp = urllib.request.urlopen(req, timeout=15, context=CTX)
+        data = json.loads(resp.read())
+        ids = [m.get("id") for m in data.get("free", []) if m.get("id")]
+        _free_cache["ids"] = ids
+        _free_cache["t"] = time.time()
+        return ids
+    except Exception:
+        return _free_cache["ids"]
+
+
+def rewrite_to_free(body, headers=None):
+    """Rewrite paid model IDs to their cline-free/ equivalents when the
+    request looks like a desktop client. Returns the (possibly new) body."""
+    if not body:
+        return body
+    try:
+        raw = body if isinstance(body, str) else body.decode("utf-8", "replace")
+        j = json.loads(raw)
+    except Exception:
+        return body
+    model = j.get("model") or ""
+    if not model or model.startswith(("cline-free/", "~")):
+        return body
+    base = model.split("/")[-1]
+    free = f"cline-free/{base}"
+    if free in _free_model_ids():
+        j["model"] = free
+        return json.dumps(j).encode()
+    return body
+
+
 def do_request(method, path, body=None, headers=None, timeout=120,
                proxy_token=None):
     """Forward to api.cline.bot with clean TLS fingerprint.
@@ -67,7 +113,7 @@ def do_request(method, path, body=None, headers=None, timeout=120,
     if proxy_token:
         fwd["Authorization"] = f"Bearer workos:{proxy_token}"
 
-    data = body.encode() if isinstance(body, str) else body
+    data = rewrite_to_free(body, fwd)
     req = urllib.request.Request(url, data=data, headers=fwd, method=method)
     t0 = time.time()
     try:
