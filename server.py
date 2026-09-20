@@ -41,6 +41,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ---- routing -------------------------------------------------------
 
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            self.close_connection = True
+
     def _dispatch(self, method):
         cid = new_correlation_id()
 
@@ -85,15 +91,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ---- handlers ------------------------------------------------------
 
+    def _get_proxy_token(self):
+        """Return a valid Cline token from the proxy's own store, or None."""
+        if not getattr(self.cfg, "owned_auth", False):
+            return None
+        try:
+            from auth import get_valid_token
+            return get_valid_token()
+        except Exception:
+            return None
+
     def _passthrough(self, method, body, cid):
         """Forward Cline Desktop's own API calls verbatim."""
+        fwd = {k: v for k, v in self.headers.items() if k.lower() not in ("host","connection","content-length","transfer-encoding")}
+        log_line(cid, f"{method} {self.path} fwd={dict(fwd)}")
         if enabled() and body:
             log_block(cid, f"CLINE {method} {self.path}", body.decode("utf-8", "replace"))
-        status, headers, rbody = do_request(method, self.path, body, dict(self.headers))
+        status, headers, rbody = do_request(method, self.path, body, dict(self.headers),
+                                            proxy_token=self._get_proxy_token())
         self._raw(status, headers, rbody)
 
     def _models(self, cid):
-        status, headers, rbody = do_request("GET", "/api/v1/models", None, dict(self.headers))
+        status, headers, rbody = do_request("GET", "/api/v1/models", None, dict(self.headers),
+                                            proxy_token=self._get_proxy_token())
         if status != 200:
             self._raw(status, headers, rbody)
             return
@@ -117,7 +137,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             log_block(cid, "OPENAI /v1/chat/completions", body.decode("utf-8", "replace"))
         if self.cfg and self.cfg.desensitize and body:
             body = desensitize_payload(body)
-        status, headers, rbody = do_request("POST", "/api/v1/chat/completions", body, dict(self.headers))
+        status, headers, rbody = do_request("POST", "/api/v1/chat/completions", body, dict(self.headers),
+                                            proxy_token=self._get_proxy_token())
         self._raw(status, headers, rbody, force_stream=True)
 
     def _anthropic(self, method, body, cid):
@@ -133,7 +154,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         payload = json.dumps(oai).encode()
         if enabled():
             log_block(cid, "ANTHROPIC /v1/messages -> OPENAI", payload.decode())
-        status, headers, rbody = do_request("POST", "/api/v1/chat/completions", payload, dict(self.headers))
+        status, headers, rbody = do_request("POST", "/api/v1/chat/completions", payload, dict(self.headers),
+                                            proxy_token=self._get_proxy_token())
         if status != 200:
             self._raw(status, headers, rbody)
             return
@@ -200,6 +222,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def serve(cfg):
+    from logging import enable_logging
+    enable_logging(cfg.log_path)
     if cfg.rate_limit:
         Handler.limiter = RateLimiter(cfg.rate_limit)
         Handler.limiter.start_cleanup()

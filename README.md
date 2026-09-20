@@ -16,42 +16,48 @@ Cline sidecar → HTTP → localhost:61022 (this proxy) → HTTPS → api.cline.
                          Python OpenSSL (passes JA3 check)
 ```
 
-Set one env var, launch Cline through the proxy:
-```
-set CLINE_API_BASE_URL=http://127.0.0.1:61022
-"C:\Users\mrenm\AppData\Local\Cline\cline-app.exe"
-```
+The proxy owns the entire auth lifecycle — it does NOT depend on the Cline desktop app for tokens:
+
+1. `--login` runs a WorkOS device-flow (prints a URL for you to confirm)
+2. Registers with Cline API, stores tokens
+3. On every upstream request the proxy injects a fresh token
+4. If the token is near expiry it automatically refreshes via WorkOS + Cline register
+
+The Cline app just needs `baseUrl` pointing at the proxy — it can use any dummy token.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `main.py` | CLI entry point (`--port`, `--bind`, `--api-key`, `--log`, `--rate-limit`, `--desensitize`) |
+| `main.py` | CLI entry point (`--port`, `--bind`, `--api-key`, `--log`, `--rate-limit`, `--desensitize`, `--login`, `--owned-auth`) |
 | `server.py` | HTTP server: Cline passthrough, `/v1/models`, `/v1/chat/completions`, `/v1/messages` |
-| `upstream.py` | Python OpenSSL upstream client (Cloud Armor bypass) |
+| `upstream.py` | Python OpenSSL upstream client (Cloud Armor bypass, injects proxy token with `workos:` prefix) |
+| `auth.py` | Full OAuth lifecycle: device flow, register, refresh, token store |
 | `anthropic.py` | Anthropic Messages API ↔ OpenAI chat completions translation |
 | `ratelimit.py` | Per-IP token-bucket rate limiter |
-| `auth.py` | Cline `providers.json` credential read/write |
 | `desensitize.py` | Content moderation trigger rewriting |
 | `logging.py` | Request logging with credential redaction |
 | `banner.py` | Startup banner |
 | `config.py` | CLI config + env var overrides |
-| `auth_flow.py` | WorkOS device-code auth → Cline register → inject creds |
-| `start_cline.bat` | Windows launcher with `CLINE_API_BASE_URL` set |
-| `tests/selfcheck.py` | Unit tests for translation + redaction + config |
+| `tests/selfcheck.py` | Unit tests |
 
-## Usage
+## Setup
 
 ```bash
-# Start proxy
+# First time: login (opens a browser page for you to confirm)
+python main.py --login
+
+# Start proxy (auto-enables owned auth if tokens exist)
 python main.py --port 61022
 
-# In another terminal, launch Cline through it
-set CLINE_API_BASE_URL=http://127.0.0.1:61022
-start "" "C:\Users\mrenm\AppData\Local\Cline\cline-app.exe"
+# Or manually force owned-auth
+python main.py --port 61022 --owned-auth
 ```
 
-Or use `start_cline.bat`.
+Then in the Cline app settings or `~/.cline/data/settings/providers.json`:
+```json
+{ "providers": { "cline": { "settings": { "baseUrl": "http://127.0.0.1:61022" } } } }
+```
 
 ## Port
 
@@ -61,15 +67,16 @@ Default `61022`. Override via `--port` or `CLINE_PROXY_PORT` env var.
 
 Cline uses **WorkOS AuthKit** device flow (`client_01K3A541FN8TA3EPPHTD2325AR`):
 
-1. `auth_flow.py` requests device code from `api.workos.com`
+1. `python main.py --login` requests device code from `api.workos.com`
 2. User confirms at `authkit.cline.bot/device?user_code=XXXX-XXXX`
-3. Exchanges for Cline session tokens via `api.cline.bot/api/v1/auth/register`
-4. Injects into `~/.cline/data/settings/providers.json`
+3. WorkOS tokens exchanged → registered with Cline API (`/api/v1/auth/register`)
+4. Tokens stored in `~/.cline/data/settings/cline_proxy_auth.json` (+ mirrored to `providers.json`)
+5. Auto-refresh before expiry on every upstream request
 
 ## Testing
 
 ```bash
-python tests/selfcheck.py   # 15 checks: anthropic translation, redaction, desensitize, config
+python tests/selfcheck.py   # 19 checks
 ```
 
 ## Why not Go?

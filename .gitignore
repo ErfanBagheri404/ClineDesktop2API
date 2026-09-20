@@ -7,3 +7,7 @@ probe.exe
 # local run state
 *.env
 *.bak
+*.log
+cline.log
+scan*.py
+test.log

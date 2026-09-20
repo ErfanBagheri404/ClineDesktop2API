@@ -56,6 +56,14 @@ c = load_config(type("A",(),{"port":9999,"bind":"0.0.0.0","api_key":"k","log":No
 check("config port", c.port==9999)
 check("config rate parsed", c.rate_limit==2.0, str(c.rate_limit))
 
+# --- auth helpers (offline logic only) ---
+from auth import _expiry_ms, load_tokens
+check("expiry ms int", _expiry_ms(1789897831000)==1789897831000)
+check("expiry ms iso", _expiry_ms("2026-09-20T10:01:18Z")>1700000000000)
+check("expiry ms empty", _expiry_ms("")==0 and _expiry_ms(None)==0)
+t = load_tokens()
+check("token store readable", t is None or (t.get("access") and t.get("refresh")))
+
 print()
 if failures: print("FAILED:", len(failures)); sys.exit(1)
 print("ALL PASS")

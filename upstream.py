@@ -15,7 +15,14 @@ PASS_HEADERS = frozenset([
     "user-agent", "x-is-multiroot",
 ])
 
-def do_request(method, path, body=None, headers=None, timeout=120):
+
+def do_request(method, path, body=None, headers=None, timeout=120,
+               proxy_token=None):
+    """Forward to api.cline.bot with clean TLS fingerprint.
+
+    If *proxy_token* is provided, it replaces any Authorization header so
+    the upstream always sees a valid token regardless of what the client sent.
+    """
     url = UPSTREAM + path
     fwd = {}
     if headers:
@@ -23,7 +30,10 @@ def do_request(method, path, body=None, headers=None, timeout=120):
             if k.lower() not in HEADERS_TO_DROP:
                 fwd[k] = v
     fwd.setdefault("User-Agent", "ClineDesktop2API/1.0")
-    fwd.setdefault("X-CLIENT-TYPE", "cline-sdk")
+    fwd.setdefault("X-CLIENT-TYPE", "cline-desktop")
+
+    if proxy_token:
+        fwd["Authorization"] = f"Bearer workos:{proxy_token}"
 
     data = body.encode() if isinstance(body, str) else body
     req = urllib.request.Request(url, data=data, headers=fwd, method=method)
