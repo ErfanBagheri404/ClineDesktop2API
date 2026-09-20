@@ -59,6 +59,13 @@ Then in the Cline app settings or `~/.cline/data/settings/providers.json`:
 { "providers": { "cline": { "settings": { "baseUrl": "http://127.0.0.1:61022" } } } }
 ```
 
+## Free-tier billing
+
+Cline bills by model ID: `deepseek/deepseek-v4.1-flash` is metered, `cline-free/deepseek-v4.1-flash` is not.
+The proxy rewrites paid IDs to their free twins automatically (cached list from
+`/api/v1/ai/cline/recommended-models`) and exposes the free IDs in `/v1/models`
+so OpenAI-compatible clients can discover them.
+
 ## Port
 
 Default `61022`. Override via `--port` or `CLINE_PROXY_PORT` env var.
