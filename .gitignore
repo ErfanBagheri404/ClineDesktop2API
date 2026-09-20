@@ -22,3 +22,6 @@ cline_tokens.json
 *.bak*
 scan*.py
 test.log
+
+# local helper scripts
+.*.py
