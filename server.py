@@ -124,10 +124,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             data = json.loads(rbody)
             models = data.get("data") or data.get("models") or []
-            out = {"object": "list", "data": [
-                {"id": m.get("id"), "object": "model", "owned_by": "cline"}
-                for m in models if m.get("id")
-            ]}
+            seen = set()
+            out_models = []
+            # merge in free-tier model IDs so clients (9router import) can
+            # see and use them — they're otherwise only in /recommended-models
+            from upstream import _free_model_ids
+            free_ids = _free_model_ids()
+            for m in models:
+                mid = m.get("id")
+                if not mid or mid in seen:
+                    continue
+                seen.add(mid)
+                out_models.append({"id": mid, "object": "model", "owned_by": "cline"})
+            for fid in free_ids:
+                if fid not in seen:
+                    seen.add(fid)
+                    out_models.append({"id": fid, "object": "model", "owned_by": "cline"})
+            out = {"object": "list", "data": out_models}
         except Exception as e:
             self._json(502, {"error": {"message": f"model list parse: {e}", "type": "proxy_error"}})
             return
