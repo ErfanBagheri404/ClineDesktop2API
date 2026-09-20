@@ -7,7 +7,7 @@ import time
 from upstream import do_request
 from ratelimit import RateLimiter
 from anthropic import anthropic_to_openai, anthropic_response, anthropic_stream_response
-from logging import enabled, log_line, log_block, new_correlation_id
+from reqlog import enabled, log_line, log_block, new_correlation_id
 from desensitize import desensitize_payload
 
 # Cline's own API surface — passed straight through to api.cline.bot.
@@ -46,6 +46,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             super().handle_one_request()
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             self.close_connection = True
+
+    def do_PATCH(self):
+        self._dispatch("PATCH")
 
     def _dispatch(self, method):
         cid = new_correlation_id()
@@ -87,7 +90,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._anthropic(method, body, cid)
             return
 
-        self._json(404, {"error": {"message": "unknown endpoint", "type": "not_found"}})
+        # Unknown paths fall through to upstream verbatim (transparent proxy).
+        self._passthrough(method, body, cid)
 
     # ---- handlers ------------------------------------------------------
 
@@ -237,7 +241,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 def serve(cfg):
-    from logging import enable_logging
+    from reqlog import enable_logging
     enable_logging(cfg.log_path)
     if cfg.rate_limit:
         Handler.limiter = RateLimiter(cfg.rate_limit)

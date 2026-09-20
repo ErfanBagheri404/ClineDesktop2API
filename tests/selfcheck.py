@@ -39,7 +39,7 @@ check("tool input json", len(tool)==1 and tool[0]["input"]=={"x":1})
 check("stop_reason", resp["stop_reason"]=="tool_use")
 
 # --- redaction ---
-from logging import redact
+from reqlog import redact
 r = redact('Bearer abcdefghijklmnop accessToken:"xyz12345xyz" api_key=12345678ab')
 check("redact bearer", "abcdefghijklmnop" not in r, r)
 check("redact accessToken", "xyz12345xyz" not in r, r)

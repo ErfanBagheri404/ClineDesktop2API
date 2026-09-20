@@ -4,7 +4,7 @@ import urllib.request
 import urllib.error
 import json
 import time
-from logging import enabled, log_line
+from reqlog import enabled, log_line
 
 UPSTREAM = "https://api.cline.bot"
 CTX = ssl.create_default_context()
@@ -14,6 +14,19 @@ PASS_HEADERS = frozenset([
     "x-client-type", "x-client-version", "x-title", "x-platform",
     "user-agent", "x-is-multiroot",
 ])
+
+# Cline's backend recognizes the desktop client via these headers and applies
+# free-model pricing accordingly. Chat POSTs arrive without them, so we inject
+# defaults so the upstream never mistakes us for an external/API consumer.
+DESKTOP_HEADERS = {
+    "X-CLIENT-TYPE": "cline-desktop",
+    "X-CLIENT-VERSION": "0.0.32",
+    "HTTP-Referer": "https://cline.bot",
+    "X-IS-MULTIROOT": "false",
+    "X-PLATFORM": "Cline Desktop",
+    "X-PLATFORM-VERSION": "0.0.32",
+    "X-Title": "Cline",
+}
 
 
 def do_request(method, path, body=None, headers=None, timeout=120,
@@ -31,6 +44,10 @@ def do_request(method, path, body=None, headers=None, timeout=120,
                 fwd[k] = v
     fwd.setdefault("User-Agent", "ClineDesktop2API/1.0")
     fwd.setdefault("X-CLIENT-TYPE", "cline-desktop")
+
+    # Inject desktop-identifying headers so Cline applies free-model pricing.
+    for k, v in DESKTOP_HEADERS.items():
+        fwd.setdefault(k, v)
 
     if proxy_token:
         fwd["Authorization"] = f"Bearer workos:{proxy_token}"
