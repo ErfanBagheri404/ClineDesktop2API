@@ -29,6 +29,21 @@ DESKTOP_HEADERS = {
 }
 
 
+def _normalize_path(path):
+    """Cline Desktop posts chat to {baseUrl}/chat/completions with no API prefix.
+
+    Upstream expects /api/v1/... so map the bare forms onto it.
+    """
+    if path.startswith("/api/v1/"):
+        return path
+    if path.startswith("/v1/"):
+        return "/api/v1/" + path[4:]
+    for bare in ("/chat/completions", "/models", "/responses", "/completions"):
+        if path == bare or path.startswith(bare + "?"):
+            return "/api/v1" + path
+    return path
+
+
 def do_request(method, path, body=None, headers=None, timeout=120,
                proxy_token=None):
     """Forward to api.cline.bot with clean TLS fingerprint.
@@ -36,7 +51,7 @@ def do_request(method, path, body=None, headers=None, timeout=120,
     If *proxy_token* is provided, it replaces any Authorization header so
     the upstream always sees a valid token regardless of what the client sent.
     """
-    url = UPSTREAM + path
+    url = UPSTREAM + _normalize_path(path)
     fwd = {}
     if headers:
         for k, v in headers.items():
