@@ -139,7 +139,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = desensitize_payload(body)
         status, headers, rbody = do_request("POST", "/api/v1/chat/completions", body, dict(self.headers),
                                             proxy_token=self._get_proxy_token())
+        # OpenAI clients expect the response at top level; api.cline.bot wraps in {"data":{...}}.
+        if status == 200 and not self._is_stream(headers):
+            try:
+                j = json.loads(rbody)
+                if "data" in j and isinstance(j.get("data"), dict):
+                    rbody = json.dumps(j["data"]).encode()
+            except Exception:
+                pass
         self._raw(status, headers, rbody, force_stream=True)
+
+    @staticmethod
+    def _is_stream(headers):
+        for k, v in headers.items():
+            if k.lower() == "content-type":
+                return v.startswith("text/event-stream")
+        return False
 
     def _anthropic(self, method, body, cid):
         if method != "POST":
