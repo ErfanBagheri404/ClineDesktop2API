@@ -1,0 +1,9 @@
+# ClineDesktop2API — proxy + auth
+__pycache__/
+*.pyc
+*.exe
+probe.exe
+
+# local run state
+*.env
+*.bak
