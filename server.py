@@ -107,7 +107,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _passthrough(self, method, body, cid):
         """Forward Cline Desktop's own API calls verbatim."""
-        fwd = {k: v for k, v in self.headers.items() if k.lower() not in ("host","connection","content-length","transfer-encoding")}
+        fwd = {k: v for k, v in self.headers.items() if k.lower() not in
+               ("host", "connection", "content-length", "transfer-encoding",
+                "accept-encoding")}
         log_line(cid, f"{method} {self.path} fwd={dict(fwd)}")
         if enabled() and body:
             log_block(cid, f"CLINE {method} {self.path}", body.decode("utf-8", "replace"))

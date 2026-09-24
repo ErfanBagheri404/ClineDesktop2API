@@ -64,6 +64,27 @@ check("expiry ms empty", _expiry_ms("")==0 and _expiry_ms(None)==0)
 t = load_tokens()
 check("token store readable", t is None or (t.get("access") and t.get("refresh")))
 
+# --- free rewrite + output clamp (offline) ---
+import upstream
+
+# Tiny probes must be raised: 32/64 -> upstream 500 "empty response content".
+assert upstream._clamp_output_tokens(b'{"max_tokens":32}') == b'{"max_tokens": 128}'
+assert upstream._clamp_output_tokens(b'{"max_completion_tokens":5}') == b'{"max_completion_tokens": 128}'
+assert upstream._clamp_output_tokens(b'{"max_tokens":4096}') == b'{"max_tokens":4096}'
+check("clamp small max_tokens", json.loads(upstream._clamp_output_tokens(b'{"max_tokens":32}'))["max_tokens"] == 128)
+check("leave normal max_tokens", json.loads(upstream._clamp_output_tokens(b'{"max_tokens":4096}'))["max_tokens"] == 4096)
+
+# Paid alias -> free rewrite; free id passes through untouched.
+upstream._free_cache.update({"ids": ["cline-free/gemini-3.8-flash"], "t": 9e12})
+rewritten = json.loads(upstream.rewrite_to_free(b'{"model":"google/gemini-3.8-flash"}'))
+check("rewrite google -> cline-free", rewritten["model"] == "cline-free/gemini-3.8-flash", rewritten)
+unchanged = upstream.rewrite_to_free(b'{"model":"cline-free/gemini-3.8-flash"}')
+check("free id untouched", json.loads(unchanged)["model"] == "cline-free/gemini-3.8-flash")
+
+# Stale content-length would truncate the rewritten body; it must be dropped.
+check("drop content-length", "content-length" in upstream.HEADERS_TO_DROP)
+check("drop accept-encoding", "accept-encoding" in upstream.HEADERS_TO_DROP)
+
 print()
 if failures: print("FAILED:", len(failures)); sys.exit(1)
 print("ALL PASS")
