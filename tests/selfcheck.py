@@ -85,6 +85,20 @@ check("free id untouched", json.loads(unchanged)["model"] == "cline-free/gemini-
 check("drop content-length", "content-length" in upstream.HEADERS_TO_DROP)
 check("drop accept-encoding", "accept-encoding" in upstream.HEADERS_TO_DROP)
 
+# --- proxy bypass for TLS-intercepted hosts ---
+import auth
+import urllib.request as _ur
+check("workos direct host", auth._needs_direct("https://api.workos.com/user_management/authorize/device"))
+check("cline stays proxied", not auth._needs_direct("https://api.cline.bot/api/v1/chat/completions"))
+# A real local proxy must be visible to the default opener, else the bypass
+# silently stops applying when someone disables their proxy.
+import os
+if os.environ.get("http_proxy") or os.environ.get("HTTP_PROXY") or _ur.getproxies().get("https"):
+    check("default opener still proxied", bool(_ur.getproxies().get("https")))
+check("direct opener has no proxy handler",
+      not any(isinstance(h, _ur.ProxyHandler) and h.proxies
+              for h in auth._DIRECT_OPENER.handlers))
+
 print()
 if failures: print("FAILED:", len(failures)); sys.exit(1)
 print("ALL PASS")

@@ -26,6 +26,21 @@ UA = "Cline/0.0.32"
 
 _CTX = ssl.create_default_context()
 
+# api.workos.com is TLS-intercepted by the local system proxy (self-signed
+# cert) while direct connections verify fine — bypass the proxy for it only.
+# api.cline.bot works through the proxy, so it stays proxied.
+_DIRECT_HOSTS = frozenset(["api.workos.com"])
+
+
+def _needs_direct(url):
+    return urllib.parse.urlparse(url).hostname in _DIRECT_HOSTS
+
+
+_DIRECT_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    urllib.request.HTTPSHandler(context=_CTX),
+)
+
 
 def _post(url, payload, form=False, timeout=30):
     if form:
@@ -40,7 +55,10 @@ def _post(url, payload, form=False, timeout=30):
         "X-CLIENT-TYPE": "cline-desktop",
     })
     try:
-        r = urllib.request.urlopen(req, timeout=timeout, context=_CTX)
+        if _needs_direct(url):
+            r = _DIRECT_OPENER.open(req, timeout=timeout)
+        else:
+            r = urllib.request.urlopen(req, timeout=timeout, context=_CTX)
         return r.status, json.loads(r.read())
     except urllib.error.HTTPError as e:
         raw = e.read()
